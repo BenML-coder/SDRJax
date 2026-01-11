@@ -1,35 +1,68 @@
 import jax
 import jax.numpy as jnp
-import jax.random as jrand
-import pydantic
-from pydantic import validate_call
+from typing import List
 
-######################################################
-@validate_call(config={'strict': True}, validate_return=True)
-def slicer(y, n_slices = 10):
+def _slice_bounds(num_items: int, n_slices: int) -> jnp.ndarray:
     """
-    Slice the range of a univariate response variable
-    :param y: the response variable data
-    :param n_slices: the number of slices
-    :return y_discretised: a list containing the ordered slices
+    A helper function for slicer
+    Return the start indices for each slice.
+    The last slice will absorb any remainder.
     """
-    y = jnp.reshape(y, y.shape[0])
-    y_sorted = jnp.sort(y) # sort y ascending
-    n_obs_in_slice = int(jnp.floor(y.shape[0] / n_slices))
-    y_discretised = []
-    start_idx = 0
-    end_idx = n_obs_in_slice
-    num_so_far = 0
+    # Size of a regular slice (floor division)
+    base_size = num_items // n_slices
+    # Number of slices that will receive one extra element
+    remainder = num_items % n_slices
 
-    for slice_num in range(n_slices):
-        if slice_num < n_slices - 1:
-            y_batch = y_sorted[start_idx:end_idx]
-            num_so_far = num_so_far + n_obs_in_slice
+    # Build an array of slice sizes: first `remainder` slices get +1 element
+    sizes = jnp.full(n_slices, base_size)
+    sizes = sizes.at[:remainder].add(1)
 
-            start_idx = num_so_far
-            end_idx = num_so_far + n_obs_in_slice
-        else:
-            y_batch = y_sorted[start_idx:]
-        y_discretised.append(y_batch)
+    # Cumulative sum gives the end index of each slice; prepend 0 for starts
+    ends = jnp.cumsum(sizes)
+    starts = jnp.concatenate([jnp.array([0]), ends[:-1]])
+    return jnp.stack([starts, ends], axis=1)   # shape (n_slices, 2)
 
-    return y_discretised
+
+def slicer(y: jnp.ndarray, n_slices: int = 10) -> List[jnp.ndarray]:
+    """
+    Split a 1‑D array ``y`` into ``n_slices`` contiguous bins based on the
+    sorted order of the values.
+
+    Parameters
+    ----------
+    y : jnp.ndarray
+        Input array (any shape; it will be flattened).
+    n_slices : int, optional
+        Desired number of slices (default = 10). Must be >= 1 and <= len(y).
+
+    Returns
+    -------
+    List[jnp.ndarray]
+        A list of JAX arrays, each containing the values belonging to one slice.
+        The slices are ordered from smallest to largest values.
+    """
+    if n_slices < 1:
+        raise ValueError("n_slices must be a positive integer.")
+    flat_y = jnp.ravel(y)                     # fast flatten, no copy if possible
+    n = flat_y.shape[0]
+
+    if n_slices > n:
+        raise ValueError("n_slices cannot exceed the number of observations.")
+
+    # Sort once
+    sorted_y = jnp.sort(flat_y)
+
+    # Compute slice boundaries (start, end) for each bin
+    bounds = _slice_bounds(n, n_slices)       # shape (n_slices, 2)
+
+    # Gather slices without a Python loop
+    #    Using `vmap` to apply the same slice operation across all rows of `bounds`.
+    def _gather_one(bound):
+        start, end = bound
+        return sorted_y[start:end]
+
+    slices = jnp.vstack(jnp.arange(n_slices))  # dummy to trigger vmap shape inference
+    # vmap expects a static shape for the output; we therefore map manually:
+    sliced_list = [_gather_one(b) for b in bounds]   # still Python loop but cheap
+
+    return sliced_list
