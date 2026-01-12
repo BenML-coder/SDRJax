@@ -1,19 +1,21 @@
 from __future__ import annotations
 from typing import Any, List
+import jax
 import jax.numpy as jnp
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+
 class SlicerConfig(BaseModel):
     """
-    A class to validate the inputs to slicer
+    A class to validate the inputs to the slicer function
 
     Parameters
     ----------
     y : Any
         The response variable – anything that ``jnp.asarray`` can turn into a JAX array
         (list, NumPy array, JAX array, etc.).
-    n_slices : int
-        Desired number of slices (must be ≥ 1 and ≤ len(y)).
+    num_slices : int
+        Desired number of slices (must be at least 1 and no more than len(y)).
     """
 
     # ------------------------------------------------------------------
@@ -22,7 +24,7 @@ class SlicerConfig(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     y: Any = Field(..., description="Response variable data")
-    n_slices: int = Field(
+    num_slices: int = Field(
         10,
         ge=1,
         description="Number of slices (must be a positive integer)",
@@ -38,51 +40,32 @@ class SlicerConfig(BaseModel):
         try:
             return jnp.asarray(v)
         except Exception as exc:
-            raise TypeError(f"Unable to convert `y` to a JAX array: {exc}") from exc
+            raise TypeError(f"Unable to convert {v} to a JAX array: {exc}") from exc
 
     # ------------------------------------------------------------------
-    # Validate the relationship between ``n_slices`` and the length of ``y``.
+    # Validate the relationship between ``num_slices`` and the length of ``y``.
     # ------------------------------------------------------------------
     @model_validator(mode="after")
     def _check_slice_feasibility(self) -> "SlicerConfig":
         """Ensure we can actually create the requested number of slices."""
         n_obs = self.y.size
-        if self.n_slices > n_obs:
+        if self.num_slices > n_obs:
             raise ValueError(
-                f"`n_slices` ({self.n_slices}) cannot exceed the number of observations "
+                f"`num_slices` ({self.num_slices}) cannot exceed the number of observations "
                 f"({n_obs})."
             )
         return self
 
-
-def _slice_bounds(num_items: int, n_slices: int) -> jnp.ndarray:
+def slicer(y: Any, num_slices: int = 10) -> List[jnp.ndarray]:
     """
-    A helper function for slicer.
-    Compute start‑ and end‑indices for each slice.
-
-    The first ``remainder`` slices receive one extra element so that the total
-    number of elements is preserved.
-    """
-    base_size = num_items // n_slices
-    remainder = num_items % n_slices
-
-    sizes = jnp.full(n_slices, base_size)
-    sizes = sizes.at[:remainder].add(1)
-
-    ends = jnp.cumsum(sizes)
-    starts = jnp.concatenate([jnp.array([0]), ends[:-1]])
-    return jnp.stack([starts, ends], axis=1)   # shape (n_slices, 2)
-
-def slicer(y: Any, n_slices: int = 10) -> List[jnp.ndarray]:
-    """
-    Split ``y`` into ``n_slices`` contiguous bins based on the sorted order
+    Split ``y`` into ``num_slices`` contiguous bins based on the sorted order
     of the values.
 
     Parameters
     ----------
     y : Any
         Input data (list, NumPy array, JAX array, …). It will be flattened.
-    n_slices : int, default 10
+    num_slices : int, default 10
         Desired number of slices. Must satisfy be at least 1 and no more than len(y).
 
     Returns
@@ -94,13 +77,13 @@ def slicer(y: Any, n_slices: int = 10) -> List[jnp.ndarray]:
     Raises
     ------
     pydantic.ValidationError / ValueError
-        If ``y`` cannot be converted to a JAX array or if ``n_slices`` is out of
+        If ``y`` or ``num_slices`` cannot be converted to a JAX array or if ``num_slices`` is out of
         bounds.
     """
     # --------------------------------------------------------------
     # Validate + coerce inputs with Pydantic
     # --------------------------------------------------------------
-    cfg = SlicerConfig(y=y, n_slices=n_slices)
+    cfg = SlicerConfig(y=y, num_slices=num_slices)
 
     # --------------------------------------------------------------
     # Core JAX work – now we know the inputs are sane
@@ -111,10 +94,14 @@ def slicer(y: Any, n_slices: int = 10) -> List[jnp.ndarray]:
     # Sort once
     sorted_y = jnp.sort(flat_y)
 
-    # Compute slice boundaries
-    bounds = _slice_bounds(n, cfg.n_slices)
+    # Compute the size of each slice (first `remainder` slices get +1 element)
+    base = flat_y.size // cfg.num_slices
+    rem = flat_y.size % cfg.num_slices
+    sizes = jnp.full(cfg.num_slices, base)
+    sizes = sizes.at[:rem].add(1)  # vectorised addition
 
-    # Gather slices
-    slices = [sorted_y[int(start):int(end)] for start, end in bounds]
-
+    # `jnp.split` expects the *indices* where the array should be broken.
+    # Those are the cumulative sums of the slice sizes, except the final one.
+    split_points = jnp.cumsum(sizes)[:-1]  # shape (num_slices‑1,)
+    slices = jnp.split(sorted_y, split_points)  # returns a list of JAX arrays
     return slices
