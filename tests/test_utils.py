@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import pytest
+import jax
+jax.config.update("jax_enable_x64", True)
 import jax.random as jrand
 import jax.numpy as jnp
 from src.utils import slicer

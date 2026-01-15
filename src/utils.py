@@ -4,6 +4,10 @@ import jax
 import jax.numpy as jnp
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# todo: enforce no nan values in y vector
+# todo: enforce no inf values in y vector
+# todo: clip num_slices to {1, ..., len(y)}
+# todo: flake8 & sphinx tools
 
 class SlicerConfig(BaseModel):
     """
@@ -38,7 +42,7 @@ class SlicerConfig(BaseModel):
     def _coerce_to_jax_array(cls, v: Any) -> jnp.ndarray:
         """Convert the incoming value to a JAX array."""
         try:
-            return jnp.asarray(v)
+            return jnp.asarray(v, dtype=v.dtype)
         except Exception as exc:
             raise TypeError(f"Unable to convert {v} to a JAX array: {exc}") from exc
 
@@ -104,4 +108,6 @@ def slicer(y: Any, num_slices: int = 10) -> List[jnp.ndarray]:
     # Those are the cumulative sums of the slice sizes, except the final one.
     split_points = jnp.cumsum(sizes)[:-1]  # shape (num_slices‑1,)
     slices = jnp.split(sorted_y, split_points)  # returns a list of JAX arrays
+    jax.clear_backends()
+    gc.collect()
     return slices
