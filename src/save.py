@@ -1,10 +1,3 @@
-import jax
-import jax.numpy as jnp
-
-class SAVE:
-    def __init__(self, num_slices:int, num_components:int):
-        pass
-
 def SAVE(X, Y, Ytype="continuous", standardiseX=True, standardiseY=True, num_slices=20, k=4):
     X = np.array(X,dtype="double")
     Y = np.array(Y)
