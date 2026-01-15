@@ -80,6 +80,9 @@ been used extensively to develop, test, and refine the JAX implementations in th
 
 We would like to thank all our contributors.
 
+We also thank the broader community for their contributions to JAX, Flax, 
+GPJax, and the many researchers whose scientific work inspired this package.
+
 # License
 
 This project is released under the *TBD* License. See the LICENSE file (to be added) for details.
