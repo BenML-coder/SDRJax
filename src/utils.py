@@ -108,6 +108,4 @@ def slicer(y: Any, num_slices: int = 10) -> List[jnp.ndarray]:
     # Those are the cumulative sums of the slice sizes, except the final one.
     split_points = jnp.cumsum(sizes)[:-1]  # shape (num_slices‑1,)
     slices = jnp.split(sorted_y, split_points)  # returns a list of JAX arrays
-    jax.clear_backends()
-    gc.collect()
     return slices
