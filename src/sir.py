@@ -1,6 +1,5 @@
-
 """
-JAX implementation of Sliced Inverse Regression (SIR).
+JAX implementation of **Sliced Inverse Regression (SIR)**.
 
 References
 ----------
@@ -12,86 +11,9 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 from typing import Tuple, Literal, Optional
+from utils import _to_array, _covariance, _ensure_2d, _standardise, _slice_categorical, _slice_continuous, _slice_means
 
 Array = jnp.ndarray
-
-
-def _to_array(x: Array | jnp.typing.ArrayLike) -> Array:
-    """Convert input to a JAX array (float64)."""
-    return jnp.asarray(x, dtype=jnp.float64)
-
-
-def _ensure_2d(y: Array) -> Array:
-    """Guarantee a column‑vector shape (n, 1)."""
-    return y[:, None] if y.ndim == 1 else y
-
-
-def _standardise(x: Array) -> Tuple[Array, Array, Array]:
-    """Zero‑mean, unit‑variance scaling."""
-    mean = jnp.mean(x, axis=0, keepdims=True)
-    std = jnp.std(x, axis=0, keepdims=True)
-    # Avoid division by zero for constant columns
-    std = jnp.where(std == 0, 1.0, std)
-    return (x - mean) / std, mean.squeeze(), std.squeeze()
-
-
-def _slice_continuous(y: Array, n_slices: int) -> Tuple[Array, int]:
-    """
-    Discretise a continuous response into `n_slices` quantile bins.
-    Returns the slice label for each observation and the effective number of slices.
-    """
-    # Compute quantile edges (excluding the last edge which is +inf)
-    quantiles = jnp.linspace(0.0, 1.0, n_slices + 1)[1:-1]
-    edges = jnp.quantile(y, quantiles, axis=0)
-    # Assign each observation to a slice (0 … n_slices‑1)
-    slice_ids = jnp.sum(y > edges, axis=1)
-    return slice_ids.astype(jnp.int32), n_slices
-
-
-def _slice_categorical(y: Array) -> Tuple[Array, int]:
-    """Map each distinct category to an integer label."""
-    uniq, inv = jnp.unique(y, return_inverse=True)
-    return inv.astype(jnp.int32), uniq.shape[0]
-
-
-def _slice_means(
-    X: Array, slice_ids: Array, n_slices: int
-) -> Tuple[Array, Array]:
-    """
-    Compute, for each slice, the mean of X and the proportion of samples.
-    Returns:
-        slice_means  – (n_slices, n_features)
-        probs        – (n_slices,)
-    """
-    n, p = X.shape
-
-    # One‑hot encoding of slice membership
-    one_hot = jax.nn.one_hot(slice_ids, n_slices)          # (n, n_slices)
-
-    # Slice probabilities = fraction of points per slice
-    probs = jnp.mean(one_hot, axis=0)                      # (n_slices,)
-
-    # Weighted sum of X within each slice
-    #   (n, p)^T @ (n, n_slices) -> (p, n_slices)
-    slice_sum = X.T @ one_hot                               # (p, n_slices)
-
-    # Avoid division by zero for empty slices
-    probs_safe = jnp.where(probs == 0, 1.0, probs)
-
-    slice_means = (slice_sum / (probs_safe * n)).T           # (n_slices, p)
-
-    return slice_means, probs
-
-
-def _covariance(X: Array) -> Array:
-    """Sample covariance matrix (unbiased estimator)."""
-    n = X.shape[0]
-    # Centered X is already passed in scaled form, but we recompute the mean for safety
-    Xc = X - jnp.mean(X, axis=0, keepdims=True)
-    cov = (Xc.T @ Xc) / (n - 1)
-    return cov
-
-
 @jax.jit
 def _sir_core(
     X: Array,
@@ -136,7 +58,7 @@ def _sir_core(
     slice_means, probs = _slice_means(X, slice_ids, n_slices_eff)
 
     # ------------------------------------------------------------------
-    # 4. Build the SIR kernel matrix Σ̂⁻¹ M̂ Σ̂⁻¹
+    # 4. Build the SIR kernel matrix Sigma^(hat, inverse) M̂ Sigma^(hat, inverse)
     #    where M̂ = Σ_{g} p_g μ_g μ_gᵀ
     # ------------------------------------------------------------------
     #   exy = slice_means  (n_slices, p)
@@ -155,7 +77,7 @@ def _sir_core(
     # 5. Generalised eigen‑problem Σ̂⁻¹ M̂ v = λ v
     #    We solve the symmetric problem using `jax.scipy.linalg.eigh`.
     # ------------------------------------------------------------------
-    #   Because Σ̂ is positive definite, we can use the Cholesky factor.
+    #   Because Sigma^hat is positive definite, we can use the Cholesky factor.
     #   JAX's eigh supports a `b` matrix for the generalized problem.
     eigvals_all, eigvecs_all = jax.scipy.linalg.eigh(
         a=m_hat, b=sigma_x, lower=False

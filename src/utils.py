@@ -3,6 +3,7 @@ from typing import Any, List
 import jax
 import jax.numpy as jnp
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import Tuple, Literal, Optional
 
 # todo: enforce no nan values in y vector
 # todo: enforce no inf values in y vector
@@ -109,3 +110,83 @@ def slicer(y: Any, num_slices: int = 10) -> List[jnp.ndarray]:
     split_points = jnp.cumsum(sizes)[:-1]  # shape (num_slices‑1,)
     slices = jnp.split(sorted_y, split_points)  # returns a list of JAX arrays
     return slices
+
+#####################
+
+Array = jnp.ndarray
+def _to_array(x: Array | jnp.typing.ArrayLike) -> Array:
+    """Convert input to a JAX array."""
+    return jnp.asarray(x)
+
+
+def _ensure_2d(y: Array) -> Array:
+    """Guarantee a column‑vector shape (n, 1)."""
+    return y[:, None] if y.ndim == 1 else y
+
+
+def _standardise(x: Array) -> Tuple[Array, Array, Array]:
+    """Zero‑mean, unit‑variance scaling."""
+    mean = jnp.mean(x, axis=0, keepdims=True)
+    std = jnp.std(x, axis=0, keepdims=True)
+    # Avoid division by zero for constant columns
+    std = jnp.where(std == 0, 1.0, std)
+    return (x - mean) / std, mean.squeeze(), std.squeeze()
+
+
+def _slice_continuous(y: Array, n_slices: int) -> Tuple[Array, int]:
+    """
+    Discretise a continuous response into `n_slices` quantile bins.
+    Returns the slice label for each observation and the effective number of slices.
+    """
+    # Compute quantile edges (excluding the last edge which is +inf)
+    quantiles = jnp.linspace(0.0, 1.0, n_slices + 1)[1:-1]
+    edges = jnp.quantile(y, quantiles, axis=0)
+    # Assign each observation to a slice (0 … n_slices‑1)
+    slice_ids = jnp.sum(y > edges, axis=1)
+    return slice_ids, n_slices
+
+
+def _slice_categorical(y: Array) -> Tuple[Array, int]:
+    """Map each distinct category to an integer label."""
+    uniq, inv = jnp.unique(y, return_inverse=True)
+    return inv, uniq.shape[0]
+
+
+def _slice_means(
+        X: Array, slice_ids: Array, n_slices: int
+) -> Tuple[Array, Array]:
+    """
+    Compute, for each slice, the mean of X and the proportion of samples.
+    Returns:
+        slice_means  – (n_slices, n_features)
+        probs        – (n_slices,)
+    """
+    n, p = X.shape
+
+    # One‑hot encoding of slice membership
+    one_hot = jax.nn.one_hot(slice_ids, n_slices)          # (n, n_slices)
+
+    # Slice probabilities = fraction of points per slice
+    probs = jnp.mean(one_hot, axis=0)                      # (n_slices,)
+
+    # Weighted sum of X within each slice
+    #   (n, p)^T @ (n, n_slices) -> (p, n_slices)
+    slice_sum = X.T @ one_hot                               # (p, n_slices)
+
+    # Avoid division by zero for empty slices
+    probs_safe = jnp.where(probs == 0, 1.0, probs)
+
+    slice_means = (slice_sum / (probs_safe * n)).T           # (n_slices, p)
+
+    return slice_means, probs
+
+
+def _covariance(X: Array) -> Array:
+    """Sample covariance matrix (unbiased estimator)."""
+    n = X.shape[0]
+    # Centered X is already passed in scaled form, but we recompute the mean for safety
+    Xc = X - jnp.mean(X, axis=0, keepdims=True)
+    cov = (Xc.T @ Xc) / (n - 1)
+    return cov
+
+
