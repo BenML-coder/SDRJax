@@ -13,12 +13,11 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 from typing import Literal, Tuple
-from utils import _to_array, _covariance, _ensure_2d, _standardise, _slice_categorical, _slice_continuous
+from src.utils import _to_array, _covariance, _ensure_2d, _standardise, _slice_categorical, _slice_continuous
 
 # ----------------------------------------------------------------------
-# Core SAVE implementation (JIT‑compiled)
+# Core SAVE implementation
 # ----------------------------------------------------------------------
-@jax.jit
 def _save_core(
         X: jnp.ndarray,
         Y: jnp.ndarray,

@@ -11,7 +11,8 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 from typing import Tuple, Literal, Optional
-from utils import _to_array, _covariance, _ensure_2d, _standardise, _slice_categorical, _slice_continuous, _slice_means
+from src.utils import (_to_array, _covariance, _ensure_2d, _standardise,
+                       _slice_categorical, _slice_continuous, _slice_means)
 
 Array = jnp.ndarray
 @jax.jit
