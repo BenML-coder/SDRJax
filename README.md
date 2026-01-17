@@ -7,7 +7,9 @@ EXPERIMENTAL – The library is under active development, has only a small test 
 and is not intended for production workloads yet. 
 Use it for research, prototyping, or learning purposes only. 
 Contributions, Bug Reports, Feature Requests are all welcome.
-Extensive use of LLMs (recommend [Lumo](https://lumo.proton.me/)) is used throughout and encouraged in contributions. 
+Extensive use of LLMs (recommend [Lumo](https://lumo.proton.me/)) is used throughout 
+and encouraged in contributions. The intention is to get draft implementations available, then
+test and revise them iteratively.
 ***
 
 # Table of Contents
